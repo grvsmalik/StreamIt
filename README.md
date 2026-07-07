@@ -1,6 +1,15 @@
 <div align="center">
 
-# StreamIt
+<img src="docs/assets/banner.png" alt="StreamIt — the browser built for watch parties over Discord" width="100%">
+
+[![Website](https://img.shields.io/badge/website-streamitnow.vercel.app-5865f2?logo=vercel&logoColor=white)](https://streamitnow.vercel.app)
+[![Download](https://img.shields.io/github/v/release/grvsmalik/StreamIt?label=download&color=5865f2)](https://github.com/grvsmalik/StreamIt/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows-2d3250)](https://github.com/grvsmalik/StreamIt/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-3ba55d)](LICENSE)
+
+**[🌐 Website](https://streamitnow.vercel.app)** · **[⬇️ Download](https://github.com/grvsmalik/StreamIt/releases/latest)** · **[📖 Docs](docs/)** · **[🤝 Contributing](CONTRIBUTING.md)**
+
+<br>
 
 **A browser built for watching media with friends over Discord.**
 
@@ -72,8 +81,9 @@ troubleshooting option, exactly as every browser has one.
 
 ## Install
 
-**From a release:** download the latest `StreamIt Setup` installer from the
-Releases page and run it.
+**From a release:** grab the latest `StreamIt Setup` installer from the
+[website](https://streamitnow.vercel.app) or the
+[Releases page](https://github.com/grvsmalik/StreamIt/releases/latest) and run it.
 
 **From source:** see below.
 
