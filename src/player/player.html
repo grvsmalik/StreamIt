@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>StreamIt Player</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+      #v { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+    </style>
+  </head>
+  <body>
+    <video id="v" controls autoplay></video>
+    <script>
+      // Loudness normalization for local media. Served same-origin with the
+      // media (streamit://app) so the Web Audio graph is never CORS-tainted.
+      const params = new URLSearchParams(location.search)
+      const src = params.get('src') || ''
+      const v = document.getElementById('v')
+      v.src = 'streamit://app/media?src=' + encodeURIComponent(src)
+      document.title = decodeURIComponent(src).split(/[\\/]/).pop() || 'StreamIt Player'
+
+      const TARGET_RMS = 0.12 // ~ -18 dBFS perceived target
+      let ctx, srcNode, gain, comp, analyser, data, normalizeOn = true, timer
+
+      function applyMode() {
+        if (!comp) return
+        // Compressor acts as a safety limiter only when normalizing (it's
+        // transparent at ratio 1).
+        comp.ratio.value = normalizeOn ? 20 : 1
+        comp.threshold.value = normalizeOn ? -3 : 0
+      }
+
+      function measure() {
+        if (!analyser) return
+        analyser.getFloatTimeDomainData(data)
+        let sum = 0
+        for (let i = 0; i < data.length; i++) sum += data[i] * data[i]
+        const rms = Math.sqrt(sum / data.length)
+        if (normalizeOn && rms > 0.0005) {
+          const g = Math.max(0.5, Math.min(4, TARGET_RMS / rms))
+          gain.gain.setTargetAtTime(g, ctx.currentTime, 0.6)
+        } else if (!normalizeOn) {
+          gain.gain.setTargetAtTime(1, ctx.currentTime, 0.2)
+        }
+        timer = setTimeout(measure, 250)
+      }
+
+      function setupGraph() {
+        if (ctx) return
+        ctx = new AudioContext()
+        srcNode = ctx.createMediaElementSource(v)
+        gain = ctx.createGain()
+        comp = ctx.createDynamicsCompressor()
+        comp.knee.value = 0
+        comp.attack.value = 0.003
+        comp.release.value = 0.25
+        analyser = ctx.createAnalyser()
+        analyser.fftSize = 1024
+        data = new Float32Array(analyser.fftSize)
+        srcNode.connect(analyser)
+        srcNode.connect(gain)
+        gain.connect(comp)
+        comp.connect(ctx.destination)
+        applyMode()
+        measure()
+      }
+
+      v.addEventListener('play', async () => {
+        setupGraph()
+        if (ctx.state === 'suspended') await ctx.resume()
+      })
+
+      // Live toggle from the Go Live panel, relayed by the tab preload.
+      if (window.streamitTab && window.streamitTab.onNormalize) {
+        window.streamitTab.onNormalize((on) => {
+          normalizeOn = !!on
+          applyMode()
+        })
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,56 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+
+/* StreamIt chrome palette (Discord-flavored, see docs/DECISIONS.md D4). */
+:root {
+  --si-bg: #1e1f22;
+  --si-surface: #2b2d31;
+  --si-raised: #313338;
+  --si-active: #404249;
+  --si-blurple: #5865f2;
+  --si-blurple-hover: #4752c4;
+  --si-text: #f2f3f5;
+  --si-text-dim: #b5bac1;
+  --si-text-faint: #949ba4;
+  --si-online: #23a55a;
+  --si-warn: #f0b232;
+  --si-danger: #f23f43;
+  --si-divider: #26272b;
+}
+
+/* Override HeroUI's dark theme tokens with the Discord preset (blurple accent,
+   Discord surface stack). Placed after the import so it wins the cascade. */
+.dark,
+[data-theme="dark"] {
+  --accent: oklch(57.74% 0.2091 273.85);
+  --accent-hover: oklch(52% 0.2091 273.85);
+  --accent-foreground: oklch(100% 0 0);
+  --background: #1e1f22;
+  --surface: #2b2d31;
+  --surface-secondary: #313338;
+  --surface-tertiary: #383a40;
+  --border: #26272b;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--si-bg);
+  color: var(--si-text);
+  font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom title bar: empty areas drag the window, controls stay interactive. */
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}

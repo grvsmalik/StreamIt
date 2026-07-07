@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+dist/
+*.tsbuildinfo
+
+# Generated icons (regenerate with `npm run gen:icons` from build/icon.svg)
+build/icons/
+build/icon.png
+build/icon.ico
+
+# Local editor / tooling artifacts
+.claude/
+.vscode/
+.idea/
+
+# Logs & OS cruft
+*.log
+.DS_Store
+Thumbs.db
