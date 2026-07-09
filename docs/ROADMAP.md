@@ -129,7 +129,17 @@ is shippable and demoable on its own.
 - ✅ Settings UI: Torrents section with "Keep downloaded files" toggle and
   "Upload speed limit" field (clamped 1–100000 KB/s). (Verified in preview: renders,
   toggle + clamp work, no console errors.)
-- ☐ Real-machine test: live magnet playback + Discord broadcast under load.
+- ✅ Subtitles + audio-track selection: probe enumerates all audio and (text)
+  subtitle streams; the player gets CC + audio menus. Audio switch runs through the
+  pipeline with the chosen track (transcoded to AAC); embedded text subs render via
+  a `<track>` element, with cue timestamps rebased in JS so they stay in sync after
+  a pipeline seek. Image subs (PGS/VobSub) and external .srt loading are follow-ups.
+  (Verified with real ffmpeg: 2-audio + embedded-SRT MKV enumerates correctly,
+  picked-audio output re-probes as H.264+AAC, subtitle extracts to valid WebVTT,
+  the JS cue-shifter drops/clamps/rebases correctly. On-screen menu + subtitle
+  rendering needs a real-machine pass.)
+- ☐ Real-machine test: live magnet playback + Discord broadcast under load;
+  subtitle/audio menus on real files.
 - **Demo:** paste a magnet link, pick the file, watch-party it in Discord — even
   if it's an HEVC/AC3 MKV.
 
