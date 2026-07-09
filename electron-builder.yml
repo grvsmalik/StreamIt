@@ -15,6 +15,9 @@ files:
 asarUnpack:
   - node_modules/ffmpeg-static/**
   - node_modules/ffprobe-static/**
+# bufferutil/utf-8-validate/utp-native ship win32-x64 N-API prebuilds, so the
+# node-gyp rebuild (which needs Python) is unnecessary.
+npmRebuild: false
 win:
   target: nsis
   icon: build/icon.ico
