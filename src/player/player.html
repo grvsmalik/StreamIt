@@ -25,6 +25,26 @@
       #bar button:hover { color: #fff; }
       #seek { flex: 1; accent-color: #5865f2; cursor: pointer; }
       #time { min-width: 96px; text-align: center; font-variant-numeric: tabular-nums; }
+      /* Subtitle / audio track pop-up menus. */
+      .menu { position: relative; }
+      .menu > button.active { color: #5865f2; }
+      .menu .items {
+        display: none; position: absolute; bottom: 34px; right: 0;
+        min-width: 150px; max-height: 260px; overflow-y: auto;
+        background: #1e1f22; border: 1px solid #2b2d31; border-radius: 8px;
+        padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      }
+      .menu.open .items { display: block; }
+      .menu .items button {
+        display: block; width: 100%; text-align: left; white-space: nowrap;
+        font-size: 12.5px; height: auto; padding: 6px 10px; border-radius: 5px;
+      }
+      .menu .items button:hover { background: #2b2d31; }
+      .menu .items button.sel { color: #5865f2; }
+      .menu .items button:disabled { color: #4e5058; cursor: default; }
+      #v::cue { background: rgba(0,0,0,0.6); color: #fff; }
+      /* Subtitle/audio buttons show a glyph, not the fixed 16px control size. */
+      #bar button.txt { width: auto; padding: 0 6px; font-size: 12px; font-weight: 600; }
       #overlay {
         position: fixed; inset: 0; display: none; z-index: 4;
         align-items: center; justify-content: center; pointer-events: none;
@@ -41,6 +61,14 @@
       <button id="play" title="Play/Pause">⏸</button>
       <input id="seek" type="range" min="0" max="1000" value="0" step="1" />
       <span id="time">0:00 / 0:00</span>
+      <div class="menu" id="subMenu" style="display:none">
+        <button class="txt" id="subBtn" title="Subtitles">CC</button>
+        <div class="items" id="subItems"></div>
+      </div>
+      <div class="menu" id="audMenu" style="display:none">
+        <button id="audBtn" title="Audio track">🎧</button>
+        <div class="items" id="audItems"></div>
+      </div>
       <button id="mute" title="Mute">🔊</button>
       <button id="fs" title="Fullscreen">⛶</button>
     </div>
@@ -59,6 +87,10 @@
       const playBtn = document.getElementById('play')
       const muteBtn = document.getElementById('mute')
       const overlay = document.getElementById('overlay')
+      const subMenu = document.getElementById('subMenu')
+      const audMenu = document.getElementById('audMenu')
+      const subItems = document.getElementById('subItems')
+      const audItems = document.getElementById('audItems')
 
       document.title =
         params.get('title') ||
@@ -68,9 +100,17 @@
       // pipeline mode: the stream starts at `offset` seconds; the <video>'s own
       // clock is relative to that. Seeking = restart the stream at a new offset.
       let mode = 'direct'
+      let baseMode = 'direct' // what probe decided, before any audio-track override
       let duration = 0
       let offset = 0
       let triedFull = false
+      let barShown = false
+      // Track selection.
+      let audioTracks = []
+      let subtitleTracks = []
+      let audioIndex // undefined = default track; else absolute ffmpeg index
+      let currentSub = -1 // -1 = off; else subtitle stream index
+      let trackEl = null // the active <track> element
 
       const fmt = (s) => {
         s = Math.max(0, Math.round(s))
@@ -81,12 +121,16 @@
 
       function setSource(startAt) {
         if (mode === 'direct') {
+          offset = 0
           v.src = 'streamit://app/media?' + sourceQS
         } else {
           offset = startAt || 0
-          v.src = 'streamit://app/pipe?' + sourceQS + '&mode=' + mode + '&t=' + offset
+          let u = 'streamit://app/pipe?' + sourceQS + '&mode=' + mode + '&t=' + offset
+          if (audioIndex !== undefined) u += '&a=' + audioIndex
+          v.src = u
         }
         v.play().catch(() => {})
+        applySubtitle() // re-attach the <track> at the new offset
       }
 
       async function start() {
@@ -95,14 +139,160 @@
           const res = await fetch('streamit://app/probe?' + sourceQS)
           if (res.ok) probe = await res.json()
         } catch {}
-        mode = probe && probe.mode ? probe.mode : 'direct'
+        mode = baseMode = probe && probe.mode ? probe.mode : 'direct'
         duration = probe ? probe.duration : 0
-        if (mode !== 'direct') {
-          bar.classList.add('on')
-        } else {
-          v.controls = true
-        }
+        audioTracks = (probe && probe.audioTracks) || []
+        subtitleTracks = ((probe && probe.subtitleTracks) || []).filter((t) => t.textBased)
+        buildMenus()
+        // Show the custom bar for pipeline playback, or whenever there are tracks
+        // to pick even on a directly-playing file.
+        barShown = mode !== 'direct' || subtitleTracks.length > 0 || audioTracks.length > 1
+        if (barShown) bar.classList.add('on')
+        else v.controls = true
         setSource(0)
+      }
+
+      // ---- track menus ----
+      function trackLabel(t, i, kind) {
+        const lang = t.language && t.language !== 'und' ? t.language : ''
+        return t.title || [lang, t.channels ? t.channels + 'ch' : ''].filter(Boolean).join(' ') ||
+          kind + ' ' + (i + 1)
+      }
+
+      function buildMenus() {
+        // Audio: only worth showing when there's a choice.
+        if (audioTracks.length > 1) {
+          audMenu.style.display = ''
+          audItems.innerHTML = ''
+          audioTracks.forEach((t, i) => {
+            const b = document.createElement('button')
+            b.textContent = trackLabel(t, i, 'Audio') + (t.codec ? '  ·  ' + t.codec : '')
+            b.dataset.idx = String(t.index)
+            b.addEventListener('click', () => chooseAudio(t.index))
+            audItems.appendChild(b)
+          })
+        }
+        // Subtitles: Off + each text track.
+        if (subtitleTracks.length > 0) {
+          subMenu.style.display = ''
+          subItems.innerHTML = ''
+          const off = document.createElement('button')
+          off.textContent = 'Off'
+          off.dataset.idx = '-1'
+          off.addEventListener('click', () => chooseSub(-1))
+          subItems.appendChild(off)
+          subtitleTracks.forEach((t, i) => {
+            const b = document.createElement('button')
+            b.textContent = trackLabel(t, i, 'Subtitle')
+            b.dataset.idx = String(t.index)
+            b.addEventListener('click', () => chooseSub(t.index))
+            subItems.appendChild(b)
+          })
+        }
+        markSelections()
+      }
+
+      function markSelections() {
+        const curAudio = audioIndex === undefined
+          ? (audioTracks.find((t) => t.isDefault) || audioTracks[0] || {}).index
+          : audioIndex
+        audItems.querySelectorAll('button').forEach((b) =>
+          b.classList.toggle('sel', Number(b.dataset.idx) === curAudio)
+        )
+        subItems.querySelectorAll('button').forEach((b) =>
+          b.classList.toggle('sel', Number(b.dataset.idx) === currentSub)
+        )
+        subMenu.querySelector('button').classList.toggle('active', currentSub !== -1)
+      }
+
+      function chooseAudio(index) {
+        const def = (audioTracks.find((t) => t.isDefault) || audioTracks[0] || {}).index
+        if (index === def && baseMode === 'direct') {
+          mode = 'direct'
+          audioIndex = undefined
+        } else {
+          // A non-default (or any track on a non-direct file) needs the pipeline.
+          mode = baseMode === 'direct' ? 'remux' : baseMode
+          audioIndex = index
+        }
+        if (!barShown) { barShown = true; bar.classList.add('on'); v.controls = false }
+        audMenu.classList.remove('open')
+        setSource(now())
+        markSelections()
+      }
+
+      function chooseSub(index) {
+        currentSub = index
+        subMenu.classList.remove('open')
+        applySubtitle()
+        markSelections()
+      }
+
+      // --- WebVTT timestamp rebasing ---
+      // The video's clock is relative to the pipeline offset after a seek, but the
+      // extracted VTT is absolute; shift cue times by -offset so they line up.
+      function parseTs(ts) {
+        const m = ts.match(/(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})/)
+        if (!m) return 0
+        return (m[1] ? +m[1] : 0) * 3600 + +m[2] * 60 + +m[3] + +m[4] / 1000
+      }
+      function fmtTs(sec) {
+        sec = Math.max(0, sec)
+        const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60)
+        const s = Math.floor(sec % 60), ms = Math.round((sec - Math.floor(sec)) * 1000)
+        const p2 = (n) => String(n).padStart(2, '0')
+        return p2(h) + ':' + p2(m) + ':' + p2(s) + '.' + String(ms).padStart(3, '0')
+      }
+      function shiftVtt(text, offsetSec) {
+        if (!text) return 'WEBVTT\n\n'
+        if (!offsetSec) return text
+        const blocks = text.replace(/\r\n/g, '\n').split(/\n\n+/)
+        const out = []
+        blocks.forEach((block, bi) => {
+          if (bi === 0) { out.push(block); return } // WEBVTT header
+          const lines = block.split('\n')
+          const ti = lines.findIndex((l) => l.includes('-->'))
+          if (ti < 0) { out.push(block); return } // NOTE/STYLE block
+          const m = lines[ti].match(
+            /(\d{1,2}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})(.*)$/
+          )
+          if (!m) { out.push(block); return }
+          let start = parseTs(m[1]) - offsetSec
+          const end = parseTs(m[2]) - offsetSec
+          if (end <= 0) return // cue fully before the seek point — drop it
+          if (start < 0) start = 0
+          lines[ti] = lines[ti].slice(0, m.index) + fmtTs(start) + ' --> ' + fmtTs(end) + (m[3] || '')
+          out.push(lines.join('\n'))
+        })
+        return out.join('\n\n') + '\n'
+      }
+
+      // Attach (or clear) the active subtitle track, rebased for the current offset.
+      const subCache = {}
+      async function applySubtitle() {
+        if (trackEl) { URL.revokeObjectURL(trackEl.src); trackEl.remove(); trackEl = null }
+        if (currentSub < 0) return
+        const idx = currentSub
+        if (subCache[idx] === undefined) {
+          try {
+            const res = await fetch('streamit://app/subs?' + sourceQS + '&i=' + idx)
+            subCache[idx] = res.ok ? await res.text() : ''
+          } catch { subCache[idx] = '' }
+        }
+        if (currentSub !== idx) return // selection changed while fetching
+        const blob = new Blob([shiftVtt(subCache[idx], mode === 'direct' ? 0 : offset)], {
+          type: 'text/vtt'
+        })
+        const t = document.createElement('track')
+        t.kind = 'subtitles'
+        t.default = true
+        t.src = URL.createObjectURL(blob)
+        v.appendChild(t)
+        trackEl = t
+        // Force display once cues are parsed (dynamic tracks default to hidden).
+        t.addEventListener('load', () => {
+          for (const tt of v.textTracks) tt.mode = 'showing'
+        })
       }
 
       // If playback fails (e.g. HEVC probe said "direct" but this machine has no
@@ -112,8 +302,9 @@
         if (triedFull) return
         triedFull = true
         const at = now()
-        mode = 'full'
+        mode = baseMode = 'full'
         v.controls = false
+        barShown = true
         bar.classList.add('on')
         setSource(at)
       })
@@ -132,26 +323,49 @@
           ? document.exitFullscreen()
           : document.documentElement.requestFullscreen()
       })
+
+      // Seek to a time: native currentTime in direct mode, pipeline restart otherwise.
+      function seekTo(t) {
+        if (mode === 'direct') v.currentTime = Math.max(0, t)
+        else setSource(Math.max(0, t))
+      }
+
       seek.addEventListener('input', () => {
         scrubbing = true
         timeEl.textContent = fmt((seek.value / 1000) * duration) + ' / ' + fmt(duration)
       })
       seek.addEventListener('change', () => {
         scrubbing = false
-        if (duration > 0) setSource((seek.value / 1000) * duration)
+        if (duration > 0) seekTo((seek.value / 1000) * duration)
       })
       setInterval(() => {
-        if (mode === 'direct' || scrubbing) return
-        timeEl.textContent = fmt(now()) + ' / ' + fmt(duration)
-        if (duration > 0) seek.value = String(Math.min(1000, (now() / duration) * 1000))
+        if (!barShown || scrubbing) return
+        const d = duration || v.duration || 0
+        timeEl.textContent = fmt(now()) + ' / ' + fmt(d)
+        if (d > 0) seek.value = String(Math.min(1000, (now() / d) * 1000))
       }, 500)
 
-      // Space/arrow keys work in pipeline mode too.
+      // Track menus: toggle open, and close when clicking elsewhere.
+      for (const [btnId, menu] of [['subBtn', subMenu], ['audBtn', audMenu]]) {
+        document.getElementById(btnId).addEventListener('click', (e) => {
+          e.stopPropagation()
+          const wasOpen = menu.classList.contains('open')
+          subMenu.classList.remove('open')
+          audMenu.classList.remove('open')
+          if (!wasOpen) menu.classList.add('open')
+        })
+      }
+      document.addEventListener('click', () => {
+        subMenu.classList.remove('open')
+        audMenu.classList.remove('open')
+      })
+
+      // Space/arrow keys once the custom bar is in charge.
       window.addEventListener('keydown', (e) => {
-        if (mode === 'direct') return
+        if (!barShown) return
         if (e.code === 'Space') { e.preventDefault(); v.paused ? v.play() : v.pause() }
-        if (e.code === 'ArrowRight' && duration) setSource(Math.min(duration - 1, now() + 10))
-        if (e.code === 'ArrowLeft') setSource(Math.max(0, now() - 10))
+        if (e.code === 'ArrowRight') seekTo(now() + 10)
+        if (e.code === 'ArrowLeft') seekTo(now() - 10)
       })
 
       // Auto-hide the bar (and cursor) while watching.

@@ -2,7 +2,7 @@ import { app, protocol } from 'electron'
 import { createReadStream, statSync, readFileSync } from 'fs'
 import { Readable } from 'stream'
 import { join, resolve } from 'path'
-import { probeMedia, startPipeline, type PlayMode } from './media'
+import { probeMedia, startPipeline, extractSubtitleVtt, type PlayMode } from './media'
 import type { TorrentEngine } from './torrent'
 
 // Local media is served through this scheme so the player page and the media
@@ -40,6 +40,14 @@ export function allowMediaFile(filePath: string): void {
 const JSON_HEADERS = { 'Content-Type': 'application/json' }
 const json = (data: unknown, status = 200): Response =>
   new Response(JSON.stringify(data), { status, headers: JSON_HEADERS })
+
+/** Parse a stream-index query param to a safe non-negative integer, or undefined.
+ *  Guards ffmpeg's -map arg against anything but a plain index. */
+function parseStreamIndex(raw: string | null): number | undefined {
+  if (raw === null || !/^\d+$/.test(raw)) return undefined
+  const n = Number(raw)
+  return Number.isSafeInteger(n) ? n : undefined
+}
 
 /**
  * Resolve the media source named by a request's query params to something
@@ -150,11 +158,26 @@ export function registerStreamitProtocol(engine: TorrentEngine): void {
         return new Response('bad mode', { status: 400 })
       }
       const t = Math.max(0, Number(url.searchParams.get('t')) || 0)
-      const { stream, kill } = startPipeline(source.input, mode, t)
+      const audioIndex = parseStreamIndex(url.searchParams.get('a'))
+      const { stream, kill } = startPipeline(source.input, mode, t, audioIndex)
       request.signal.addEventListener('abort', kill)
       return new Response(Readable.toWeb(stream) as unknown as ReadableStream, {
         status: 200,
         headers: { 'Content-Type': 'video/mp4' }
+      })
+    }
+
+    // ---- subtitle track → WebVTT (full file; player rebases for pipeline seeks) ----
+    if (path === '/subs') {
+      const source = resolveSource(url, engine)
+      if (!source) return new Response('forbidden', { status: 403 })
+      const index = parseStreamIndex(url.searchParams.get('i'))
+      if (index === undefined) return new Response('bad index', { status: 400 })
+      const { stream, kill } = extractSubtitleVtt(source.input, index)
+      request.signal.addEventListener('abort', kill)
+      return new Response(Readable.toWeb(stream) as unknown as ReadableStream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/vtt; charset=utf-8' }
       })
     }
 
