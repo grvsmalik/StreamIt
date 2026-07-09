@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit config for StreamIt (Electron + TypeScript + React).
+language: en-US
+early_access: false
+
+reviews:
+  # StreamIt has real security surface (custom protocol handlers, IPC bridges, a
+  # torrent loopback server, spawning ffmpeg) — prefer catching issues over quiet.
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: false
+  poem: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+
+  # Don't waste review budget on generated/bundled/binary files.
+  path_filters:
+    - "!**/node_modules/**"
+    - "!out/**"
+    - "!dist/**"
+    - "!build/**/*.png"
+    - "!build/**/*.ico"
+    - "!**/*.tsbuildinfo"
+    - "!package-lock.json"
+
+  path_instructions:
+    - path: "src/main/**"
+      instructions: >-
+        Electron main process (Node privileges). Scrutinize security: the
+        streamit:// protocol handlers must keep their allowlist checks
+        (allowMediaFile, engine.ownsUrl, the x-streamit header gate) so web
+        content can't read arbitrary files or drive torrent control. Flag any
+        path traversal, unvalidated URL/params reaching fs or child_process, or
+        ffmpeg/WebTorrent inputs that aren't range/format checked. Confirm
+        spawned processes are killed on abort/quit (no leaked transcodes).
+    - path: "src/preload/**"
+      instructions: >-
+        Context-isolated bridges. Ensure nothing over-exposes ipcRenderer or
+        Node APIs to page JS, and that channel names/payloads stay minimal and
+        typed.
+    - path: "src/player/*.html"
+      instructions: >-
+        Same-origin player pages. Watch for XSS/injection when interpolating
+        titles, URLs, or torrent metadata into the DOM; prefer textContent over
+        innerHTML for untrusted values.
+    - path: "src/renderer/**"
+      instructions: >-
+        React 19 renderer (the browser chrome). Focus on correctness and state
+        handling; this layer has no Node access.
+
+chat:
+  auto_reply: true
