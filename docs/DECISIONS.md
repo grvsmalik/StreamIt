@@ -99,3 +99,66 @@ option (GPU glitches, driver crashes, battery), identical in framing to
 Chrome/Edge/Firefox. It is not site-wired, not auto-flipped, and not documented as
 a capture workaround. Distinct from D1: a general setting is fine; building a
 circumvention pipeline around it is not.
+
+## D12 — Auto-update via electron-updater + GitHub releases
+**Status:** Accepted
+
+StreamIt ships as a self-updating desktop app rather than making users re-download
+installers. `electron-updater` reads the existing GitHub `publish` config
+(electron-builder.yml, owner `grvsmalik` / repo `StreamIt`) to find new versions —
+no separate update server. `src/main/updater.ts` background-downloads on a check
+(on launch + every 6h) and surfaces state through an IPC channel the Settings →
+About panel mirrors; the user chooses when to relaunch ("Restart to update"),
+though a pending update also installs on next quit. In dev / unpackaged builds it
+reports `unsupported` and never touches the network.
+
+**Operational requirement:** updates only work if each GitHub release contains the
+`latest.yml` + installer + `.blockmap` that electron-builder emits. Cut releases
+with `npm run release` (`electron-builder --publish always`) — not the plain
+`package` script, which builds the installer but uploads nothing. A release whose
+`version` is ≤ the installed one is simply ignored, so the version in package.json
+must be bumped per release.
+
+## D11 — Torrent streaming: user-responsibility, universal codecs
+**Status:** Accepted
+
+StreamIt streams torrents (magnet links + `.torrent` files) so peer-to-peer and
+freely-distributed media (Internet Archive, public-domain film, open movies,
+personal remote backups) is a first-class watch-party source. This does **not**
+weaken D1: torrents are not DRM circumvention, and StreamIt applies no
+content filtering — the **user is responsible for what they choose to download,
+view, and stream.** The torrent page states this plainly, including that
+downloading a torrent also uploads to peers.
+
+To make *every* file play (the requirement that motivated this), playback runs
+through a probe-and-adapt pipeline rather than hoping Chromium accepts the bytes:
+
+- `media.ts` runs `ffprobe` and picks a **PlayMode**: `direct` (Chromium plays
+  as-is, native seeking + range requests), `remux` (codecs fine, container isn't
+  — repackage to fragmented MP4, stream copy, no re-encode), `audio` (video
+  copied, only the audio transcoded to AAC — the common AC3/DTS/E-AC3 case), or
+  `full` (both transcoded — the HEVC-without-hardware / exotic-codec fallback).
+- Non-direct modes stream through `ffmpeg` into fragmented MP4 (`frag_keyframe+
+  empty_moov`), which plays while still being written. Because fMP4 has no fixed
+  end, the player uses a **custom control bar** and seeking = restart ffmpeg with
+  `-ss <t>` (the `/pipe?...&t=` endpoint); the pipeline is killed on the request's
+  abort signal so a seek/close doesn't leak a transcode.
+- HEVC is enabled for direct play via `PlatformHEVCDecoderSupport`; if a machine
+  can't hardware-decode it, the player's `error` handler falls back to `full`
+  once. So HEVC costs no CPU where the GPU handles it, and still always plays.
+
+Torrent bytes reach both the `<video>` and ffmpeg over a **loopback HTTP server**
+(`TorrentEngine`) whose Range reads drive WebTorrent piece prioritization — that
+is what makes play-while-downloading work. The `streamit://` handler proxies to it
+and gates torrent-control endpoints behind an `x-streamit` header that web content
+can't forge. **Seeding is throttled to ~0 whenever a Go Live tab is active**
+(`onLiveChange` → `setStreaming`) so uploads never starve the broadcast upstream.
+Downloads land in `userData/torrents` and are discarded on quit unless
+`torrentKeepFiles` is set. ffmpeg/ffprobe ship as `asarUnpack`ed binaries.
+
+**Consequence:** a large native dependency (~80MB ffmpeg) and real CPU cost when
+transcoding, accepted because "it just plays" is the whole point. Transcoding
+while *also* encoding a Discord stream is CPU-heavy on weak machines; `veryfast`
+preset mitigates. The design keeps the existing same-origin player, loudness
+normalization, theater, and capture path unchanged — torrents/local files are just
+new *sources* into the same pipe.

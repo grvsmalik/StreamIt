@@ -60,12 +60,19 @@ files, YouTube, Twitch, and the like.
 - 📺 **Local & personal media** — drag-and-drop or open local video (served
   through a same-origin player with real-time loudness normalization); great for
   Jellyfin/Plex watch parties.
+- 🧲 **Torrent streaming** — paste a magnet link or open a `.torrent` and it plays
+  while it downloads (Internet Archive, public-domain film, open movies, your own
+  remote media). Seeding auto-throttles during Go Live so it never starves the
+  stream. *You are responsible for the content you access.*
+- 🔁 **Plays anything** — an on-the-fly `ffmpeg` pipeline detects each file's
+  codecs and remuxes/transcodes only what it must (AC3/DTS audio, HEVC, odd
+  containers), so files that normally play silent or black just play.
 - 💬 **Discord Rich Presence** — shows "Watching &lt;title&gt; · on StreamIt" with
   your real identity and tier, no setup required.
 - 📊 **Honest quality** — detects your Nitro tier and tells you exactly what your
   friends will actually see, instead of letting you send more than Discord carries.
-- 🧭 **A real browser** — tabs, address bar, favicons, themed to feel at home next
-  to Discord.
+- 🧭 **A real browser** — tabs, address bar, favicons, bookmarks, themed to feel at
+  home next to Discord.
 
 ## Scope & the DRM question
 

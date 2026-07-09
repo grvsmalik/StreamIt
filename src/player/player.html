@@ -6,26 +6,181 @@
     <style>
       html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
       #v { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+      /* Custom control bar, used only when the source plays through the ffmpeg
+         pipeline (fragmented MP4 has no end, so native seeking can't work). */
+      #bar {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+        display: none; align-items: center; gap: 10px;
+        padding: 8px 14px;
+        background: linear-gradient(transparent, rgba(0,0,0,0.75));
+        color: #dbdee1; font: 13px "Segoe UI", system-ui, sans-serif;
+        transition: opacity 0.25s;
+      }
+      #bar.on { display: flex; }
+      #bar.idle { opacity: 0; }
+      #bar button {
+        background: none; border: 0; color: #dbdee1; cursor: pointer;
+        font-size: 16px; width: 30px; height: 26px; padding: 0;
+      }
+      #bar button:hover { color: #fff; }
+      #seek { flex: 1; accent-color: #5865f2; cursor: pointer; }
+      #time { min-width: 96px; text-align: center; font-variant-numeric: tabular-nums; }
+      #overlay {
+        position: fixed; inset: 0; display: none; z-index: 4;
+        align-items: center; justify-content: center; pointer-events: none;
+        color: #dbdee1; font: 15px "Segoe UI", system-ui, sans-serif;
+        text-shadow: 0 1px 4px #000;
+      }
+      #overlay.on { display: flex; }
     </style>
   </head>
   <body>
-    <video id="v" controls autoplay></video>
+    <video id="v" autoplay></video>
+    <div id="overlay">Buffering…</div>
+    <div id="bar">
+      <button id="play" title="Play/Pause">⏸</button>
+      <input id="seek" type="range" min="0" max="1000" value="0" step="1" />
+      <span id="time">0:00 / 0:00</span>
+      <button id="mute" title="Mute">🔊</button>
+      <button id="fs" title="Fullscreen">⛶</button>
+    </div>
     <script>
-      // Loudness normalization for local media. Served same-origin with the
-      // media (streamit://app) so the Web Audio graph is never CORS-tainted.
       const params = new URLSearchParams(location.search)
-      const src = params.get('src') || ''
-      const v = document.getElementById('v')
-      v.src = 'streamit://app/media?src=' + encodeURIComponent(src)
-      document.title = decodeURIComponent(src).split(/[\\/]/).pop() || 'StreamIt Player'
+      const src = params.get('src') // local file path
+      const turl = params.get('turl') // torrent loopback stream URL
+      const sourceQS = src
+        ? 'src=' + encodeURIComponent(src)
+        : 'turl=' + encodeURIComponent(turl || '')
 
+      const v = document.getElementById('v')
+      const bar = document.getElementById('bar')
+      const seek = document.getElementById('seek')
+      const timeEl = document.getElementById('time')
+      const playBtn = document.getElementById('play')
+      const muteBtn = document.getElementById('mute')
+      const overlay = document.getElementById('overlay')
+
+      document.title =
+        params.get('title') ||
+        (src ? decodeURIComponent(src).split(/[\\/]/).pop() : 'StreamIt Player')
+
+      // ---- playback state ----
+      // pipeline mode: the stream starts at `offset` seconds; the <video>'s own
+      // clock is relative to that. Seeking = restart the stream at a new offset.
+      let mode = 'direct'
+      let duration = 0
+      let offset = 0
+      let triedFull = false
+
+      const fmt = (s) => {
+        s = Math.max(0, Math.round(s))
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60
+        return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0')
+      }
+      const now = () => (mode === 'direct' ? v.currentTime : offset + v.currentTime)
+
+      function setSource(startAt) {
+        if (mode === 'direct') {
+          v.src = 'streamit://app/media?' + sourceQS
+        } else {
+          offset = startAt || 0
+          v.src = 'streamit://app/pipe?' + sourceQS + '&mode=' + mode + '&t=' + offset
+        }
+        v.play().catch(() => {})
+      }
+
+      async function start() {
+        let probe = null
+        try {
+          const res = await fetch('streamit://app/probe?' + sourceQS)
+          if (res.ok) probe = await res.json()
+        } catch {}
+        mode = probe && probe.mode ? probe.mode : 'direct'
+        duration = probe ? probe.duration : 0
+        if (mode !== 'direct') {
+          bar.classList.add('on')
+        } else {
+          v.controls = true
+        }
+        setSource(0)
+      }
+
+      // If playback fails (e.g. HEVC probe said "direct" but this machine has no
+      // hardware decoder, or a copied stream Chromium rejects), fall back once to
+      // the everything-transcoded pipeline, which always plays.
+      v.addEventListener('error', () => {
+        if (triedFull) return
+        triedFull = true
+        const at = now()
+        mode = 'full'
+        v.controls = false
+        bar.classList.add('on')
+        setSource(at)
+      })
+
+      // ---- custom controls (pipeline mode) ----
+      let scrubbing = false
+      playBtn.addEventListener('click', () => (v.paused ? v.play() : v.pause()))
+      v.addEventListener('play', () => (playBtn.textContent = '⏸'))
+      v.addEventListener('pause', () => (playBtn.textContent = '▶'))
+      muteBtn.addEventListener('click', () => {
+        v.muted = !v.muted
+        muteBtn.textContent = v.muted ? '🔇' : '🔊'
+      })
+      document.getElementById('fs').addEventListener('click', () => {
+        document.fullscreenElement
+          ? document.exitFullscreen()
+          : document.documentElement.requestFullscreen()
+      })
+      seek.addEventListener('input', () => {
+        scrubbing = true
+        timeEl.textContent = fmt((seek.value / 1000) * duration) + ' / ' + fmt(duration)
+      })
+      seek.addEventListener('change', () => {
+        scrubbing = false
+        if (duration > 0) setSource((seek.value / 1000) * duration)
+      })
+      setInterval(() => {
+        if (mode === 'direct' || scrubbing) return
+        timeEl.textContent = fmt(now()) + ' / ' + fmt(duration)
+        if (duration > 0) seek.value = String(Math.min(1000, (now() / duration) * 1000))
+      }, 500)
+
+      // Space/arrow keys work in pipeline mode too.
+      window.addEventListener('keydown', (e) => {
+        if (mode === 'direct') return
+        if (e.code === 'Space') { e.preventDefault(); v.paused ? v.play() : v.pause() }
+        if (e.code === 'ArrowRight' && duration) setSource(Math.min(duration - 1, now() + 10))
+        if (e.code === 'ArrowLeft') setSource(Math.max(0, now() - 10))
+      })
+
+      // Auto-hide the bar (and cursor) while watching.
+      let idleTimer
+      function poke() {
+        bar.classList.remove('idle')
+        document.body.style.cursor = ''
+        clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => {
+          if (!v.paused) {
+            bar.classList.add('idle')
+            document.body.style.cursor = 'none'
+          }
+        }, 2500)
+      }
+      window.addEventListener('mousemove', poke)
+      poke()
+
+      // Buffering indicator — matters for torrents still fetching pieces.
+      v.addEventListener('waiting', () => overlay.classList.add('on'))
+      v.addEventListener('playing', () => overlay.classList.remove('on'))
+      v.addEventListener('canplay', () => overlay.classList.remove('on'))
+
+      // ---- loudness normalization (unchanged; see docs/DECISIONS.md) ----
       const TARGET_RMS = 0.12 // ~ -18 dBFS perceived target
       let ctx, srcNode, gain, comp, analyser, data, normalizeOn = true, timer
 
       function applyMode() {
         if (!comp) return
-        // Compressor acts as a safety limiter only when normalizing (it's
-        // transparent at ratio 1).
         comp.ratio.value = normalizeOn ? 20 : 1
         comp.threshold.value = normalizeOn ? -3 : 0
       }
@@ -70,13 +225,14 @@
         if (ctx.state === 'suspended') await ctx.resume()
       })
 
-      // Live toggle from the Go Live panel, relayed by the tab preload.
       if (window.streamitTab && window.streamitTab.onNormalize) {
         window.streamitTab.onNormalize((on) => {
           normalizeOn = !!on
           applyMode()
         })
       }
+
+      start()
     </script>
   </body>
 </html>

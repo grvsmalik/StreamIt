@@ -6,6 +6,10 @@ import { registerStreamitProtocol, STREAMIT_SCHEME } from './protocol'
 import { DiscordRPC } from './discord'
 import { computeTheaterSize } from './theater'
 import { initAdblock, setAdblock } from './adblock'
+import { TorrentEngine } from './torrent'
+import { killAllPipelines } from './media'
+import { initUpdater } from './updater'
+import { loadBookmarks, addBookmark, removeBookmark } from './bookmarks'
 import { DEFAULT_DISCORD_CLIENT_ID, type Bounds, type DiscordStatus, type Settings } from '../shared/types'
 
 /** User override wins; otherwise StreamIt's own bundled app ID. */
@@ -35,6 +39,14 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding')
 // click; also lets the player's AudioContext resume for normalization.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
+// Torrent/local files are very often HEVC (H.265). Enable Chromium's hardware
+// HEVC decoder so those direct-play instead of always hitting the ffmpeg
+// transcode path; the player falls back to transcoding if a machine lacks it.
+app.commandLine.appendSwitch(
+  'enable-features',
+  'PlatformHEVCDecoderSupport,PlatformEncryptedDolbyVision'
+)
+
 // The streamit:// scheme serves the player + local media same-origin; must be
 // declared privileged before the app is ready.
 protocol.registerSchemesAsPrivileged([
@@ -48,6 +60,10 @@ let tabs: TabManager | null = null
 let mainWindow: BrowserWindow | null = null
 let discord: DiscordRPC | null = null
 let theaterRestore: { bounds: Electron.Rectangle; maximized: boolean } | null = null
+const torrents = new TorrentEngine(
+  join(app.getPath('userData'), 'torrents'),
+  loadSettings().torrentUploadKBs
+)
 
 function updatePresence(): void {
   if (!discord) return
@@ -103,6 +119,9 @@ function createWindow(): void {
   mainWindow = win
   tabs = new TabManager(win)
   tabs.onUpdate = () => updatePresence()
+  // Seeding must not compete with the Go Live upstream — cap uploads hard
+  // whenever a broadcast tab is active.
+  tabs.onLiveChange = (isLive) => torrents.setStreaming(isLive)
 
   win.on('ready-to-show', () => win.show())
 
@@ -119,10 +138,17 @@ function registerIpc(): void {
     const next = saveSettings(patch)
     if (patch && 'discordClientId' in patch) initDiscord(effectiveClientId(next))
     if (patch && 'adBlock' in patch) setAdblock(next.adBlock)
+    if (patch && 'torrentUploadKBs' in patch) torrents.setUploadCap(next.torrentUploadKBs)
     return next
   })
 
   ipcMain.handle('discord:get', () => discord?.status() ?? { connected: false, user: null })
+
+  ipcMain.handle('app:version', () => app.getVersion())
+
+  ipcMain.handle('bookmarks:get', () => loadBookmarks())
+  ipcMain.handle('bookmarks:add', (_e, b: Parameters<typeof addBookmark>[0]) => addBookmark(b))
+  ipcMain.handle('bookmarks:remove', (_e, url: string) => removeBookmark(url))
 
   ipcMain.handle('tabs:get', () => tabs?.snapshot() ?? { tabs: [], activeId: null })
   // The renderer signals readiness after subscribing, so the first tab's sync
@@ -149,7 +175,10 @@ function registerIpc(): void {
       title: 'Open video',
       properties: ['openFile', 'multiSelections'],
       filters: [
-        { name: 'Video', extensions: ['mp4', 'mkv', 'webm', 'mov', 'm4v', 'avi', 'ogv'] },
+        {
+          name: 'Video & torrents',
+          extensions: ['mp4', 'mkv', 'webm', 'mov', 'm4v', 'avi', 'ogv', 'ts', 'wmv', 'torrent']
+        },
         { name: 'All files', extensions: ['*'] }
       ]
     })
@@ -190,9 +219,10 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
-  registerStreamitProtocol()
+  registerStreamitProtocol(torrents)
   registerIpc()
   createWindow()
+  initUpdater(() => mainWindow)
   const startup = loadSettings()
   initDiscord(effectiveClientId(startup))
   void initAdblock(startup.adBlock)
@@ -203,4 +233,14 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+// Stop transcodes and tear down the torrent client (default: discard downloads).
+app.on('before-quit', (e) => {
+  killAllPipelines()
+  if (torrents.isActive()) {
+    e.preventDefault()
+    const keep = loadSettings().torrentKeepFiles
+    void torrents.destroy(keep).finally(() => app.exit(0))
+  }
 })

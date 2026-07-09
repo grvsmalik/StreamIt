@@ -12,6 +12,10 @@ const nextId = (): string => `tab-${++counter}`
 function normalizeInput(input: string): string {
   const s = input.trim()
   if (!s) return 'about:blank'
+  // Magnet links open the torrent landing page instead of navigating.
+  if (/^magnet:\?/i.test(s)) {
+    return `streamit://app/torrent.html?uri=${encodeURIComponent(s)}`
+  }
   if (/^[a-z]+:\/\//i.test(s) || s === 'about:blank') return s
   const looksLikeDomain = !s.includes(' ') && /^[^\s]+\.[^\s]{2,}(\/.*)?$/.test(s)
   if (looksLikeDomain) return `https://${s}`
@@ -42,6 +46,8 @@ export class TabManager {
 
   /** Called on every state change (used to keep Discord presence in sync). */
   onUpdate: ((snapshot: TabsSnapshot) => void) | null = null
+  /** Called when the live/broadcast tab is set or cleared (true = now live). */
+  onLiveChange: ((isLive: boolean) => void) | null = null
 
   constructor(win: BrowserWindow) {
     this.win = win
@@ -115,8 +121,11 @@ export class TabManager {
   }
 
   setLiveTab(id: string | null): void {
-    this.liveId = id && this.views.has(id) ? id : null
+    const next = id && this.views.has(id) ? id : null
+    const changed = (this.liveId === null) !== (next === null)
+    this.liveId = next
     this.applyAudio()
+    if (changed) this.onLiveChange?.(next !== null)
     this.emit()
   }
 
@@ -223,10 +232,15 @@ export class TabManager {
   }
 
   /** Open a local video in a new tab through the StreamIt player (served
-   *  same-origin with the media so loudness normalization isn't taint-silenced). */
+   *  same-origin with the media so loudness normalization isn't taint-silenced).
+   *  A .torrent file opens the torrent landing page instead. */
   openFile(filePath: string): void {
     allowMediaFile(filePath)
-    this.create(`streamit://app/player.html?src=${encodeURIComponent(filePath)}`)
+    if (/\.torrent$/i.test(filePath)) {
+      this.create(`streamit://app/torrent.html?file=${encodeURIComponent(filePath)}`)
+    } else {
+      this.create(`streamit://app/player.html?src=${encodeURIComponent(filePath)}`)
+    }
   }
 
   setNormalize(on: boolean): void {

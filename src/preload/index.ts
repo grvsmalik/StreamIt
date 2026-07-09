@@ -1,8 +1,18 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { TabsSnapshot, Bounds, Settings, DiscordStatus } from '../shared/types'
+import type {
+  TabsSnapshot,
+  Bounds,
+  Settings,
+  DiscordStatus,
+  UpdateState,
+  Bookmark
+} from '../shared/types'
 
 const api = {
   platform: process.platform,
+
+  /** Installed app version (from package.json / the built app). */
+  getVersion: (): Promise<string> => ipcRenderer.invoke('app:version'),
 
   getSettings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
   setSettings: (patch: Partial<Settings>): Promise<Settings> =>
@@ -41,6 +51,12 @@ const api = {
     setHidden: (hidden: boolean): void => ipcRenderer.send('view:setHidden', hidden)
   },
 
+  bookmarks: {
+    list: (): Promise<Bookmark[]> => ipcRenderer.invoke('bookmarks:get'),
+    add: (b: Bookmark): Promise<Bookmark[]> => ipcRenderer.invoke('bookmarks:add', b),
+    remove: (url: string): Promise<Bookmark[]> => ipcRenderer.invoke('bookmarks:remove', url)
+  },
+
   theater: {
     enter: (opts: { profile: string; aspect: string }): Promise<{ width: number; height: number }> =>
       ipcRenderer.invoke('theater:enter', opts),
@@ -53,6 +69,19 @@ const api = {
       const handler = (_e: unknown, status: DiscordStatus): void => cb(status)
       ipcRenderer.on('discord:status', handler)
       return () => ipcRenderer.removeListener('discord:status', handler)
+    }
+  },
+
+  updates: {
+    get: (): Promise<UpdateState> => ipcRenderer.invoke('update:get'),
+    /** Kick off a manual check; resolves with the state at call time. */
+    check: (): Promise<UpdateState> => ipcRenderer.invoke('update:check'),
+    /** Relaunch into the downloaded update (only valid when state is 'ready'). */
+    install: (): void => ipcRenderer.send('update:install'),
+    onState: (cb: (state: UpdateState) => void): (() => void) => {
+      const handler = (_e: unknown, state: UpdateState): void => cb(state)
+      ipcRenderer.on('update:state', handler)
+      return () => ipcRenderer.removeListener('update:state', handler)
     }
   }
 }

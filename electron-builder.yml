@@ -10,6 +10,11 @@ files:
   - src/player/**/*
   - build/icon.png
   - package.json
+# ffmpeg/ffprobe are native executables — they must live outside the asar so
+# they can be spawned. media.ts rewrites app.asar → app.asar.unpacked to find them.
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+  - node_modules/ffprobe-static/**
 win:
   target: nsis
   icon: build/icon.ico

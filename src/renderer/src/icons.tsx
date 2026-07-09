@@ -108,6 +108,26 @@ export const Info = (p: P): JSX.Element => (
 export const Sliders = (p: P): JSX.Element => (
   <Stroke {...p} d="M4 6h8M16 6h4M4 12h4M12 12h8M4 18h12M18 18h2M14 4v4M8 10v4M16 16v4" />
 )
+export const Star = ({ filled, size = 18, className, style }: P & { filled?: boolean }): JSX.Element => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill={filled ? 'currentColor' : 'none'}
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    style={style}
+    aria-hidden="true"
+  >
+    <path d="M12 17.75l-6.172 3.245l1.179 -6.873l-5 -4.867l6.9 -1l3.086 -6.253l3.086 6.253l6.9 1l-5 4.867l1.179 6.873z" />
+  </svg>
+)
+export const Magnet = (p: P): JSX.Element => (
+  <Stroke {...p} d="M6 19V9a6 6 0 0 1 12 0v10M4 19h4M16 19h4M6 13h4M14 13h4" />
+)
 export const Globe = (p: P): JSX.Element => (
   <Stroke
     {...p}

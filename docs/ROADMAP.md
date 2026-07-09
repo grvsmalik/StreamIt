@@ -96,9 +96,42 @@ is shippable and demoable on its own.
 - ✅ **Packaging** — electron-builder produces `dist/StreamIt Setup 0.1.0.exe`
   (NSIS installer, desktop/start-menu shortcuts). Verified: packaged `StreamIt.exe`
   boots with a window; asar bundles the player page + icon.
+- ✅ **Auto-update** (`electron-updater` + the GitHub publish config, D12):
+  background check on launch + every 6h, downloads silently, Settings → About shows
+  version + status with a "Restart to update" action; `npm run release` publishes
+  the update metadata. Reports "unsupported" in dev. (Verified: typecheck + build,
+  dep externalized in the main bundle, About panel renders/interacts in preview;
+  real update flow needs a published release to test.)
+- ✅ **Bookmarks** — star toggle in the address bar (Ctrl/Cmd+D) saves the active
+  tab; a bookmarks bar under the toolbar shows saved pages (favicon + title), click
+  to open in the current tab, hover to remove. Persisted as `bookmarks.json` in
+  userData (main-process store + IPC, same pattern as settings). (Verified in
+  preview: add/remove via star, chip, and Ctrl+D; bar hides when empty; no errors.)
 - ☐ Onboarding refinement; empty/error states.
 - ☐ Submit to Discord's detectable-games database (zero-setup recognition).
 - **Demo:** shareable beta installer exists.
+
+## M6 — Universal playback + torrents (in progress)
+- ✅ Probe-and-adapt media pipeline (`media.ts`): `ffprobe` classifies every
+  source into direct / remux / audio / full and `ffmpeg` streams non-direct ones
+  as fragmented MP4, so AC3/DTS/E-AC3 audio and odd containers play instead of
+  going silent/black. HEVC direct-plays via hardware decode with a transcode
+  fallback. (Verified: real ffmpeg — AC3-in-MKV → detected `audio` → transcoded
+  output re-probes as direct/H.264+AAC; HEVC & clean MP4 classify correctly.)
+- ✅ Torrent streaming (`torrent.ts`): magnet links + `.torrent` files open a
+  landing page (metadata, file list, live progress) and play while downloading via
+  a loopback Range server driving WebTorrent piece priority. Seeding auto-throttles
+  to ~0 during Go Live; downloads discarded on quit unless kept. (Verified:
+  WebTorrent import/instantiation + loopback bind/teardown; typecheck + build.)
+- ✅ Custom player controls for pipeline mode (fMP4 has no native seek): scrub =
+  restart ffmpeg at the new timestamp; buffering overlay for torrent fetches.
+- ✅ User-responsibility framing on the torrent page (D11, D1 preserved).
+- ✅ Settings UI: Torrents section with "Keep downloaded files" toggle and
+  "Upload speed limit" field (clamped 1–100000 KB/s). (Verified in preview: renders,
+  toggle + clamp work, no console errors.)
+- ☐ Real-machine test: live magnet playback + Discord broadcast under load.
+- **Demo:** paste a magnet link, pick the file, watch-party it in Discord — even
+  if it's an HEVC/AC3 MKV.
 
 ## Phase B — Own transport (post-v1, the moat)
 - In-app WebRTC encoder → viewer page; bot posts a watch link.

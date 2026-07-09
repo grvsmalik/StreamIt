@@ -1,0 +1,145 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Torrent</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #1e1f22; color: #dbdee1;
+        font: 14px "Segoe UI", system-ui, sans-serif; }
+      .wrap { max-width: 720px; margin: 0 auto; padding: 48px 24px; }
+      h1 { font-size: 18px; margin: 0 0 4px; word-break: break-all; }
+      .sub { color: #80848e; font-size: 12.5px; margin-bottom: 24px; }
+      .stats { display: flex; gap: 18px; color: #80848e; font-size: 12.5px;
+        margin: 14px 0 22px; font-variant-numeric: tabular-nums; }
+      .stats b { color: #dbdee1; font-weight: 600; }
+      .bar { height: 6px; background: #2b2d31; border-radius: 3px; overflow: hidden; }
+      .bar i { display: block; height: 100%; width: 0; background: #5865f2; transition: width 0.4s; }
+      .file { display: flex; align-items: center; gap: 12px; padding: 11px 14px;
+        background: #2b2d31; border-radius: 8px; margin-bottom: 8px; }
+      .file .name { flex: 1; word-break: break-all; }
+      .file .size { color: #80848e; font-size: 12.5px; white-space: nowrap; }
+      .file button { background: #5865f2; color: #fff; border: 0; border-radius: 6px;
+        padding: 6px 14px; font: 600 13px "Segoe UI", system-ui; cursor: pointer; }
+      .file button:hover { background: #6d79f5; }
+      .file.dim { opacity: 0.45; }
+      .err { color: #f0736f; }
+      .note { color: #80848e; font-size: 12px; margin-top: 28px; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1 id="name">Loading torrent…</h1>
+      <div class="sub" id="sub">Fetching metadata from peers</div>
+      <div class="bar"><i id="prog"></i></div>
+      <div class="stats">
+        <span>↓ <b id="dl">0 KB/s</b></span>
+        <span>↑ <b id="ul">0 KB/s</b></span>
+        <span>peers <b id="peers">0</b></span>
+        <span><b id="pct">0%</b></span>
+      </div>
+      <div id="files"></div>
+      <p class="note">
+        Playback starts while the download runs; pieces are fetched in play order.
+        You are downloading from and uploading to other peers — you are responsible
+        for the content you access this way.
+      </p>
+    </div>
+    <script>
+      const params = new URLSearchParams(location.search)
+      const HDR = { 'x-streamit': '1', 'content-type': 'application/json' }
+      const $ = (id) => document.getElementById(id)
+
+      const fmtSize = (n) => {
+        const u = ['B', 'KB', 'MB', 'GB', 'TB']
+        let i = 0
+        while (n >= 1024 && i < u.length - 1) { n /= 1024; i++ }
+        return n.toFixed(n >= 100 || i === 0 ? 0 : 1) + ' ' + u[i]
+      }
+      const fmtSpeed = (n) => fmtSize(n) + '/s'
+
+      async function play(ih, index, name) {
+        const res = await fetch(
+          'streamit://app/torrent/fileUrl?ih=' + ih + '&i=' + index,
+          { headers: HDR }
+        )
+        const { turl } = await res.json()
+        location.href =
+          'streamit://app/player.html?turl=' + encodeURIComponent(turl) +
+          '&title=' + encodeURIComponent(name)
+      }
+
+      let rendered = false
+      function renderFiles(st) {
+        if (rendered) return
+        rendered = true
+        const box = $('files')
+        box.innerHTML = ''
+        const files = [...st.files].sort((a, b) => (b.isVideo - a.isVideo) || b.size - a.size)
+        for (const f of files) {
+          const row = document.createElement('div')
+          row.className = 'file' + (f.isVideo ? '' : ' dim')
+          const name = document.createElement('span')
+          name.className = 'name'
+          name.textContent = f.name
+          const size = document.createElement('span')
+          size.className = 'size'
+          size.textContent = fmtSize(f.size)
+          row.append(name, size)
+          if (f.isVideo) {
+            const btn = document.createElement('button')
+            btn.textContent = '▶ Play'
+            btn.addEventListener('click', () => play(st.infoHash, f.index, f.name))
+            row.append(btn)
+          }
+          box.append(row)
+        }
+        const videos = files.filter((f) => f.isVideo)
+        $('sub').textContent = videos.length
+          ? videos.length + ' playable file' + (videos.length > 1 ? 's' : '')
+          : 'No video files in this torrent'
+        // Single video: no reason to make the user click.
+        if (videos.length === 1) play(st.infoHash, videos[0].index, videos[0].name)
+      }
+
+      function renderStats(st) {
+        $('name').textContent = st.name
+        $('dl').textContent = fmtSpeed(st.downloadSpeed)
+        $('ul').textContent = fmtSpeed(st.uploadSpeed)
+        $('peers').textContent = st.peers
+        $('pct').textContent = Math.round(st.progress * 100) + '%'
+        $('prog').style.width = st.progress * 100 + '%'
+      }
+
+      async function main() {
+        const uri = params.get('uri')
+        const file = params.get('file')
+        let st
+        try {
+          const res = await fetch('streamit://app/torrent/add', {
+            method: 'POST',
+            headers: HDR,
+            body: JSON.stringify(uri ? { uri } : { file })
+          })
+          st = await res.json()
+          if (!res.ok) throw new Error(st.error || 'failed')
+        } catch (err) {
+          $('name').textContent = 'Could not open torrent'
+          $('sub').innerHTML = '<span class="err">' + (err.message || err) + '</span>'
+          return
+        }
+        renderStats(st)
+        if (st.ready) renderFiles(st)
+        setInterval(async () => {
+          try {
+            const res = await fetch('streamit://app/torrent/status?ih=' + st.infoHash, { headers: HDR })
+            if (!res.ok) return
+            const s = await res.json()
+            renderStats(s)
+            if (s.ready) renderFiles(s)
+          } catch {}
+        }, 1000)
+      }
+      main()
+    </script>
+  </body>
+</html>

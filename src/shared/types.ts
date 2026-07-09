@@ -23,6 +23,13 @@ export interface Bounds {
   height: number
 }
 
+/** A saved page. `url` is the identity (one bookmark per URL). */
+export interface Bookmark {
+  url: string
+  title: string
+  favicon: string | null
+}
+
 export type CaptureProfile = 'Match content' | 'Fast motion' | 'Movie'
 export type TheaterAspect = 'Match' | '16:9' | '21:9' | 'Vertical'
 
@@ -39,6 +46,10 @@ export interface Settings {
   discordClientId: string
   /** Block ads and trackers (uBlock Origin / EasyList filters) across all tabs. */
   adBlock: boolean
+  /** Torrent seeding upload cap in KB/s (auto-throttled to ~0 while streaming). */
+  torrentUploadKBs: number
+  /** Keep downloaded torrent data on quit instead of discarding it. */
+  torrentKeepFiles: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -47,7 +58,9 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultProfile: 'Match content',
   theaterAspect: 'Match',
   discordClientId: '',
-  adBlock: true
+  adBlock: true,
+  torrentUploadKBs: 100,
+  torrentKeepFiles: false
 }
 
 /** StreamIt's own Discord application ID — public (not a secret), shipped with
@@ -69,3 +82,14 @@ export interface DiscordStatus {
   connected: boolean
   user: DiscordUser | null
 }
+
+/** Auto-update lifecycle, mirrored from main to the Settings → About UI. */
+export type UpdateState =
+  | { status: 'unsupported' } // dev build / not installed
+  | { status: 'idle' }
+  | { status: 'checking' }
+  | { status: 'available'; version: string }
+  | { status: 'downloading'; percent: number }
+  | { status: 'ready'; version: string } // downloaded, relaunch to apply
+  | { status: 'current' } // already latest
+  | { status: 'error'; message: string }

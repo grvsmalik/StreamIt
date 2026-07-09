@@ -33,7 +33,7 @@ window.addEventListener('loadedmetadata', reportAspect, true)
 window.addEventListener('resize', reportAspect, true)
 setInterval(reportAspect, 2000)
 
-const VIDEO_RE = /\.(mp4|mkv|webm|mov|m4v|avi|ogv)$/i
+const VIDEO_RE = /\.(mp4|mkv|webm|mov|m4v|avi|ogv|ts|m2ts|wmv|flv|torrent)$/i
 
 function hasFiles(e: DragEvent): boolean {
   return !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')

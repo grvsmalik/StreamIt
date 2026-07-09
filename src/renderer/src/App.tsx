@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react'
 import { Button } from '@heroui/react'
-import type { TabsSnapshot, DiscordStatus } from '../../shared/types'
+import type { TabsSnapshot, DiscordStatus, Bookmark } from '../../shared/types'
 import { SettingsScreen } from './Settings'
 import { StreamItMark } from './Logo'
 import {
@@ -22,7 +22,8 @@ import {
   Maximize,
   Globe,
   VolumeX,
-  FolderOpen
+  FolderOpen,
+  Star
 } from './icons'
 
 const api = typeof window !== 'undefined' ? window.streamit : undefined
@@ -82,6 +83,7 @@ export default function App(): JSX.Element {
   const [dragActive, setDragActive] = useState(false)
   const [discord, setDiscord] = useState<DiscordStatus>({ connected: false, user: null })
   const [lockedRes, setLockedRes] = useState<{ width: number; height: number } | null>(null)
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
 
   useEffect(() => {
     if (!api) return
@@ -89,6 +91,7 @@ export default function App(): JSX.Element {
     api.tabs.ready()
     void api.tabs.get().then(setSnap)
     void api.getSettings().then((s) => setProfile(s.defaultProfile))
+    void api.bookmarks.list().then(setBookmarks)
     return off
   }, [])
 
@@ -132,6 +135,42 @@ export default function App(): JSX.Element {
     setLockedRes(null)
   }
 
+  const active = snap.tabs.find((t) => t.id === snap.activeId) ?? null
+
+  const bookmarkable = !!active && !!active.url && active.url !== 'about:blank'
+  const isBookmarked = bookmarkable && bookmarks.some((b) => b.url === active!.url)
+
+  const toggleBookmark = (): void => {
+    if (!bookmarkable || !active) return
+    const p = isBookmarked
+      ? api?.bookmarks.remove(active.url)
+      : api?.bookmarks.add({
+          url: active.url,
+          title: active.title || active.url,
+          favicon: active.favicon
+        })
+    if (p) void p.then(setBookmarks)
+    else if (!api) {
+      // Preview harness (no Electron): update local state so the UI is testable.
+      setBookmarks((list) =>
+        isBookmarked
+          ? list.filter((b) => b.url !== active.url)
+          : [{ url: active.url, title: active.title || active.url, favicon: active.favicon }, ...list]
+      )
+    }
+  }
+
+  const openBookmark = (url: string): void => {
+    if (active) api?.tabs.navigate(active.id, url)
+    else api?.tabs.create(url)
+  }
+
+  const removeBookmark = (url: string): void => {
+    const p = api?.bookmarks.remove(url)
+    if (p) void p.then(setBookmarks)
+    else setBookmarks((list) => list.filter((b) => b.url !== url))
+  }
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const typing = (e.target as HTMLElement)?.tagName === 'INPUT'
@@ -143,14 +182,16 @@ export default function App(): JSX.Element {
         e.preventDefault()
         void api?.openFileDialog()
       }
+      if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault()
+        toggleBookmark()
+      }
       if (e.key === 'Escape') exitTheater()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [theater, profile])
-
-  const active = snap.tabs.find((t) => t.id === snap.activeId) ?? null
+  }, [theater, profile, active, isBookmarked, bookmarkable])
 
   const goLive = (): void => {
     if (active) setLiveId(active.id)
@@ -194,7 +235,18 @@ export default function App(): JSX.Element {
         </div>
       )}
       <TabStrip snap={snap} liveId={liveId} />
-      <Toolbar active={active} onGoLive={goLive} onTheater={() => void enterTheater()} onSettings={openSettings} />
+      <Toolbar
+        active={active}
+        onGoLive={goLive}
+        onTheater={() => void enterTheater()}
+        onSettings={openSettings}
+        bookmarkable={bookmarkable}
+        isBookmarked={isBookmarked}
+        onToggleBookmark={toggleBookmark}
+      />
+      {bookmarks.length > 0 && (
+        <BookmarksBar bookmarks={bookmarks} onOpen={openBookmark} onRemove={removeBookmark} />
+      )}
       <div className="flex min-h-0 flex-1">
         <ContentArea
           hasPage={!!active && active.url !== '' && active.url !== 'about:blank'}
@@ -283,12 +335,18 @@ function Toolbar({
   active,
   onGoLive,
   onTheater,
-  onSettings
+  onSettings,
+  bookmarkable,
+  isBookmarked,
+  onToggleBookmark
 }: {
   active: TabsSnapshot['tabs'][number] | null
   onGoLive: () => void
   onTheater: () => void
   onSettings: () => void
+  bookmarkable: boolean
+  isBookmarked: boolean
+  onToggleBookmark: () => void
 }): JSX.Element {
   const [address, setAddress] = useState('')
   const focused = useRef(false)
@@ -362,6 +420,21 @@ function Toolbar({
           className="flex-1 bg-transparent text-[13px] outline-none"
           style={{ color: 'var(--si-text-dim)' }}
         />
+        <button
+          type="button"
+          onClick={onToggleBookmark}
+          disabled={!bookmarkable}
+          className="shrink-0"
+          style={{
+            color: isBookmarked ? 'var(--si-warn)' : 'var(--si-text-faint)',
+            opacity: bookmarkable ? 1 : 0.4,
+            cursor: bookmarkable ? 'pointer' : 'default'
+          }}
+          title={isBookmarked ? 'Remove bookmark (Ctrl+D)' : 'Bookmark this page (Ctrl+D)'}
+          aria-label={isBookmarked ? 'Remove bookmark' : 'Add bookmark'}
+        >
+          <Star size={15} filled={isBookmarked} />
+        </button>
       </form>
       <Button variant="primary" size="sm" onPress={onGoLive} className="gap-1.5" style={{ background: 'var(--si-blurple)', color: '#fff' }}>
         <Share size={16} />
@@ -373,6 +446,56 @@ function Toolbar({
       <button onClick={onSettings} style={{ color: 'var(--si-text-dim)' }} title="Settings" aria-label="Settings">
         <Settings size={17} />
       </button>
+    </div>
+  )
+}
+
+function BookmarksBar({
+  bookmarks,
+  onOpen,
+  onRemove
+}: {
+  bookmarks: Bookmark[]
+  onOpen: (url: string) => void
+  onRemove: (url: string) => void
+}): JSX.Element {
+  return (
+    <div
+      className="flex items-center gap-1 overflow-x-auto px-2 py-1"
+      style={{ background: 'var(--si-raised)', borderBottom: '1px solid var(--si-divider)' }}
+    >
+      {bookmarks.map((b) => (
+        <div
+          key={b.url}
+          className="group flex shrink-0 items-center gap-1.5 rounded-md py-1 pl-2 pr-1"
+          style={{ color: 'var(--si-text-dim)' }}
+          title={b.url}
+        >
+          <button
+            onClick={() => onOpen(b.url)}
+            className="flex items-center gap-1.5 text-[12px]"
+            style={{ color: 'inherit', maxWidth: 160 }}
+          >
+            {b.favicon ? (
+              <img src={b.favicon} width={14} height={14} alt="" className="shrink-0" style={{ borderRadius: 2 }} />
+            ) : (
+              <span className="shrink-0 opacity-70">
+                <Globe size={13} />
+              </span>
+            )}
+            <span className="truncate">{b.title || b.url}</span>
+          </button>
+          <button
+            onClick={() => onRemove(b.url)}
+            className="opacity-0 transition-opacity group-hover:opacity-100"
+            style={{ color: 'var(--si-text-faint)' }}
+            title="Remove bookmark"
+            aria-label="Remove bookmark"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      ))}
     </div>
   )
 }

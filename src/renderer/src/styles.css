@@ -54,3 +54,13 @@ body {
 .no-drag {
   -webkit-app-region: no-drag;
 }
+
+/* Spinner for the "checking for updates" refresh icon. */
+@keyframes si-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.si-spin {
+  animation: si-spin 0.9s linear infinite;
+}
